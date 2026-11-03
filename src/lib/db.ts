@@ -1,34 +1,56 @@
-import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
+import type BetterSqlite3 from "better-sqlite3";
 
-const dbPath =
-  process.env.DATABASE_URL?.replace(/^\.\//, "") || "data/kacollection.db";
-const absolutePath = path.isAbsolute(dbPath)
-  ? dbPath
-  : path.join(process.cwd(), dbPath);
-
-fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+const absolutePath = path.join(
+  /* turbopackIgnore: true */ process.cwd(),
+  "data",
+  "kacollection.db"
+);
 
 const globalForDb = globalThis as unknown as {
-  kacollectionDb?: Database.Database;
+  kacollectionDb?: BetterSqlite3.Database;
 };
 
-export const db =
-  globalForDb.kacollectionDb ??
-  new Database(absolutePath, {
-    // Keep a single connection in Next.js dev (hot reload)
-  });
-
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
-
-if (process.env.NODE_ENV !== "production") {
-  globalForDb.kacollectionDb = db;
+function isBuildPhase() {
+  return process.env.NEXT_PHASE === "phase-production-build";
 }
 
-export function initSchema() {
-  db.exec(`
+function createConnection() {
+  // Native module — load only when actually needed at runtime
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const Database = require("better-sqlite3") as typeof BetterSqlite3;
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+  const connection = new Database(absolutePath);
+  connection.pragma("journal_mode = WAL");
+  connection.pragma("foreign_keys = ON");
+  return connection;
+}
+
+export function getDb() {
+  if (isBuildPhase()) {
+    throw new Error("Database is unavailable during Next.js build");
+  }
+
+  if (!globalForDb.kacollectionDb) {
+    globalForDb.kacollectionDb = createConnection();
+    initSchema(globalForDb.kacollectionDb);
+  }
+
+  return globalForDb.kacollectionDb;
+}
+
+/** Lazy proxy so importing this module during build does not open SQLite. */
+export const db = new Proxy({} as BetterSqlite3.Database, {
+  get(_target, prop, receiver) {
+    const instance = getDb();
+    const value = Reflect.get(instance, prop, receiver);
+    return typeof value === "function" ? value.bind(instance) : value;
+  },
+});
+
+export function initSchema(connection: BetterSqlite3.Database = getDb()) {
+  connection.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -113,8 +135,6 @@ export function initSchema() {
     );
   `);
 }
-
-initSchema();
 
 export type Role = "CUSTOMER" | "ADMIN";
 export type OrderStatus =

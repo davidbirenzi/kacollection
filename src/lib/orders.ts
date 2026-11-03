@@ -160,6 +160,7 @@ export function listOrdersForUser(userId: string) {
 }
 
 export function listAllOrders() {
+  if (process.env.NEXT_PHASE === "phase-production-build") return [];
   return db
     .prepare(
       `SELECT o.*, u.name AS customer_name

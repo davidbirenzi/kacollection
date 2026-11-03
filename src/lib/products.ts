@@ -1,12 +1,18 @@
 import { db, type CategoryRow, type ProductRow, type ReviewRow } from "./db";
 
+function isBuildPhase() {
+  return process.env.NEXT_PHASE === "phase-production-build";
+}
+
 export function listCategories() {
+  if (isBuildPhase()) return [];
   return db
     .prepare("SELECT * FROM categories ORDER BY name ASC")
     .all() as CategoryRow[];
 }
 
 export function getCategoryBySlug(slug: string) {
+  if (isBuildPhase()) return undefined;
   return db.prepare("SELECT * FROM categories WHERE slug = ?").get(slug) as
     | CategoryRow
     | undefined;
@@ -20,6 +26,7 @@ type ProductFilters = {
 };
 
 export function listProducts(filters: ProductFilters = {}) {
+  if (isBuildPhase()) return [];
   const clauses: string[] = [];
   const params: (string | number)[] = [];
 
@@ -52,6 +59,7 @@ export function listProducts(filters: ProductFilters = {}) {
 }
 
 export function getProductBySlug(slug: string) {
+  if (isBuildPhase()) return undefined;
   return db
     .prepare(
       `SELECT p.*, c.name AS category_name, c.slug AS category_slug
@@ -63,6 +71,7 @@ export function getProductBySlug(slug: string) {
 }
 
 export function getProductById(id: string) {
+  if (isBuildPhase()) return undefined;
   return db
     .prepare(
       `SELECT p.*, c.name AS category_name, c.slug AS category_slug
@@ -74,6 +83,7 @@ export function getProductById(id: string) {
 }
 
 export function getProductReviews(productId: string) {
+  if (isBuildPhase()) return [];
   return db
     .prepare(
       `SELECT r.*, u.name AS user_name
