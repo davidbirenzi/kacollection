@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: kacollection
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:prod
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATABASE_URL
+        value: ./data/kacollection.db
+      - key: AUTH_SECRET
+        generateValue: true
