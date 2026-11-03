@@ -9,11 +9,11 @@
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start -H 0.0.0.0",
-    "start:prod": "npm run db:seed && npm run start",
+    "start:prod": "npm rebuild better-sqlite3 && node scripts/seed.cjs && npm run start",
     "lint": "eslint",
-    "db:seed": "tsx src/scripts/seed.ts",
+    "db:seed": "node scripts/seed.cjs",
     "db:ensure": "tsx src/scripts/ensure-db.ts",
-    "db:reset": "tsx src/scripts/seed.ts"
+    "db:reset": "node scripts/seed.cjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
