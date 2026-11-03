@@ -8,7 +8,5 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "20"
-      - key: DATABASE_URL
-        value: ./data/kacollection.db
       - key: AUTH_SECRET
         generateValue: true

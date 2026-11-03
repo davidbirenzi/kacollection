@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createId, db } from "@/lib/db";
 import { slugify } from "@/lib/format";
-import { getProductById, listProducts } from "@/lib/products";
+import { getProductById, listProducts, saveProduct } from "@/lib/products";
+import { createId, readStore } from "@/lib/store";
 
 const schema = z.object({
   name: z.string().trim().min(2),
@@ -31,38 +31,38 @@ export async function POST(request: Request) {
       );
     }
 
-    const category = db
-      .prepare("SELECT id FROM categories WHERE id = ?")
-      .get(parsed.data.categoryId);
+    const store = readStore();
+    const category = store.categories.find((c) => c.id === parsed.data.categoryId);
     if (!category) {
       return NextResponse.json({ error: "Category not found" }, { status: 400 });
     }
 
     const id = createId();
     let slug = slugify(parsed.data.name);
-    const existing = db
-      .prepare("SELECT id FROM products WHERE slug = ?")
-      .get(slug);
-    if (existing) slug = `${slug}-${id.slice(0, 6)}`;
+    if (store.products.some((p) => p.slug === slug)) {
+      slug = `${slug}-${id.slice(0, 6)}`;
+    }
 
-    db.prepare(
-      `INSERT INTO products (
-        id, name, slug, description, price, image, stock, featured, available, category_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      id,
-      parsed.data.name,
-      slug,
-      parsed.data.description,
-      parsed.data.price,
-      parsed.data.image,
-      parsed.data.stock,
-      parsed.data.featured ? 1 : 0,
-      parsed.data.available === false ? 0 : 1,
-      parsed.data.categoryId
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const product = saveProduct(
+      {
+        id,
+        name: parsed.data.name,
+        slug,
+        description: parsed.data.description,
+        price: parsed.data.price,
+        image: parsed.data.image,
+        stock: parsed.data.stock,
+        featured: parsed.data.featured ? 1 : 0,
+        available: parsed.data.available === false ? 0 : 1,
+        category_id: parsed.data.categoryId,
+        created_at: now,
+        updated_at: now,
+      },
+      true
     );
 
-    return NextResponse.json({ product: getProductById(id) }, { status: 201 });
+    return NextResponse.json({ product }, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Could not create product" }, { status: 500 });
   }

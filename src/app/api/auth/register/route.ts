@@ -6,7 +6,7 @@ import {
   hashPassword,
   toPublicUser,
 } from "@/lib/auth";
-import { createId, db } from "@/lib/db";
+import { createId, updateStore } from "@/lib/store";
 
 const schema = z.object({
   name: z.string().trim().min(2, "Name is required"),
@@ -40,17 +40,19 @@ export async function POST(request: Request) {
 
     const id = createId();
     const passwordHash = await hashPassword(parsed.data.password);
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
 
-    db.prepare(
-      `INSERT INTO users (id, name, email, password_hash, phone, role)
-       VALUES (?, ?, ?, ?, ?, 'CUSTOMER')`
-    ).run(
-      id,
-      parsed.data.name,
-      email,
-      passwordHash,
-      parsed.data.phone || null
-    );
+    updateStore((store) => {
+      store.users.push({
+        id,
+        name: parsed.data.name,
+        email,
+        password_hash: passwordHash,
+        phone: parsed.data.phone || null,
+        role: "CUSTOMER",
+        created_at: now,
+      });
+    });
 
     const user = findUserByEmail(email)!;
     const sessionUser = toPublicUser(user);

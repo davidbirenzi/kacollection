@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSession } from "@/lib/auth";
-import { createId, db } from "@/lib/db";
 import { getProductById } from "@/lib/products";
+import { createId, readStore, updateStore } from "@/lib/store";
 
 const schema = z.object({
   productId: z.string().min(1),
@@ -30,11 +30,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
 
-    const existing = db
-      .prepare(
-        "SELECT id FROM reviews WHERE user_id = ? AND product_id = ?"
-      )
-      .get(user.id, parsed.data.productId);
+    const existing = readStore().reviews.find(
+      (r) => r.user_id === user.id && r.product_id === parsed.data.productId
+    );
 
     if (existing) {
       return NextResponse.json(
@@ -44,16 +42,18 @@ export async function POST(request: Request) {
     }
 
     const id = createId();
-    db.prepare(
-      `INSERT INTO reviews (id, rating, comment, user_id, product_id)
-       VALUES (?, ?, ?, ?, ?)`
-    ).run(
-      id,
-      parsed.data.rating,
-      parsed.data.comment,
-      user.id,
-      parsed.data.productId
-    );
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+
+    updateStore((store) => {
+      store.reviews.push({
+        id,
+        rating: parsed.data.rating,
+        comment: parsed.data.comment,
+        user_id: user.id,
+        product_id: parsed.data.productId,
+        created_at: now,
+      });
+    });
 
     return NextResponse.json({ ok: true, id }, { status: 201 });
   } catch {

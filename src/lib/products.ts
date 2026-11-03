@@ -1,21 +1,21 @@
-import { db, type CategoryRow, type ProductRow, type ReviewRow } from "./db";
+import { readStore, updateStore } from "./store";
+import type { CategoryRow, ProductRow, ReviewRow } from "./types";
 
-function isBuildPhase() {
-  return process.env.NEXT_PHASE === "phase-production-build";
+function withCategory(product: ProductRow, categories: CategoryRow[]): ProductRow {
+  const category = categories.find((c) => c.id === product.category_id);
+  return {
+    ...product,
+    category_name: category?.name,
+    category_slug: category?.slug,
+  };
 }
 
 export function listCategories() {
-  if (isBuildPhase()) return [];
-  return db
-    .prepare("SELECT * FROM categories ORDER BY name ASC")
-    .all() as CategoryRow[];
+  return [...readStore().categories].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function getCategoryBySlug(slug: string) {
-  if (isBuildPhase()) return undefined;
-  return db.prepare("SELECT * FROM categories WHERE slug = ?").get(slug) as
-    | CategoryRow
-    | undefined;
+  return readStore().categories.find((c) => c.slug === slug);
 }
 
 type ProductFilters = {
@@ -26,71 +26,72 @@ type ProductFilters = {
 };
 
 export function listProducts(filters: ProductFilters = {}) {
-  if (isBuildPhase()) return [];
-  const clauses: string[] = [];
-  const params: (string | number)[] = [];
+  const store = readStore();
+  let products = store.products.map((p) => withCategory(p, store.categories));
 
   if (filters.availableOnly !== false) {
-    clauses.push("p.available = 1");
+    products = products.filter((p) => p.available === 1);
   }
   if (filters.featured) {
-    clauses.push("p.featured = 1");
+    products = products.filter((p) => p.featured === 1);
   }
   if (filters.category) {
-    clauses.push("c.slug = ?");
-    params.push(filters.category);
+    products = products.filter((p) => p.category_slug === filters.category);
   }
   if (filters.q) {
-    clauses.push("(p.name LIKE ? OR p.description LIKE ?)");
-    const like = `%${filters.q}%`;
-    params.push(like, like);
+    const q = filters.q.toLowerCase();
+    products = products.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        p.description.toLowerCase().includes(q)
+    );
   }
 
-  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  return db
-    .prepare(
-      `SELECT p.*, c.name AS category_name, c.slug AS category_slug
-       FROM products p
-       JOIN categories c ON c.id = p.category_id
-       ${where}
-       ORDER BY p.featured DESC, p.name ASC`
-    )
-    .all(...params) as ProductRow[];
+  return products.sort((a, b) => {
+    if (b.featured !== a.featured) return b.featured - a.featured;
+    return a.name.localeCompare(b.name);
+  });
 }
 
 export function getProductBySlug(slug: string) {
-  if (isBuildPhase()) return undefined;
-  return db
-    .prepare(
-      `SELECT p.*, c.name AS category_name, c.slug AS category_slug
-       FROM products p
-       JOIN categories c ON c.id = p.category_id
-       WHERE p.slug = ?`
-    )
-    .get(slug) as ProductRow | undefined;
+  const store = readStore();
+  const product = store.products.find((p) => p.slug === slug);
+  return product ? withCategory(product, store.categories) : undefined;
 }
 
 export function getProductById(id: string) {
-  if (isBuildPhase()) return undefined;
-  return db
-    .prepare(
-      `SELECT p.*, c.name AS category_name, c.slug AS category_slug
-       FROM products p
-       JOIN categories c ON c.id = p.category_id
-       WHERE p.id = ?`
-    )
-    .get(id) as ProductRow | undefined;
+  const store = readStore();
+  const product = store.products.find((p) => p.id === id);
+  return product ? withCategory(product, store.categories) : undefined;
 }
 
 export function getProductReviews(productId: string) {
-  if (isBuildPhase()) return [];
-  return db
-    .prepare(
-      `SELECT r.*, u.name AS user_name
-       FROM reviews r
-       JOIN users u ON u.id = r.user_id
-       WHERE r.product_id = ?
-       ORDER BY r.created_at DESC`
-    )
-    .all(productId) as ReviewRow[];
+  const store = readStore();
+  return store.reviews
+    .filter((r) => r.product_id === productId)
+    .map((review) => {
+      const user = store.users.find((u) => u.id === review.user_id);
+      return { ...review, user_name: user?.name } as ReviewRow;
+    })
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+export function saveProduct(product: ProductRow, isNew: boolean) {
+  updateStore((store) => {
+    if (isNew) {
+      store.products.unshift(product);
+    } else {
+      store.products = store.products.map((p) =>
+        p.id === product.id ? product : p
+      );
+    }
+  });
+  return getProductById(product.id);
+}
+
+export function deleteProduct(id: string) {
+  updateStore((store) => {
+    store.products = store.products.filter((p) => p.id !== id);
+    store.reviews = store.reviews.filter((r) => r.product_id !== id);
+  });
 }

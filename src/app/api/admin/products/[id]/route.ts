@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { slugify } from "@/lib/format";
-import { getProductById } from "@/lib/products";
+import {
+  deleteProduct,
+  getProductById,
+  saveProduct,
+} from "@/lib/products";
+import { readStore } from "@/lib/store";
 
 const schema = z.object({
   name: z.string().trim().min(2),
@@ -34,32 +38,31 @@ export async function PUT(request: Request, { params }: Params) {
       );
     }
 
+    const store = readStore();
     let slug = slugify(parsed.data.name);
-    const clash = db
-      .prepare("SELECT id FROM products WHERE slug = ? AND id != ?")
-      .get(slug, id);
-    if (clash) slug = `${slug}-${id.slice(0, 6)}`;
+    if (store.products.some((p) => p.slug === slug && p.id !== id)) {
+      slug = `${slug}-${id.slice(0, 6)}`;
+    }
 
-    db.prepare(
-      `UPDATE products SET
-        name = ?, slug = ?, description = ?, price = ?, image = ?,
-        stock = ?, featured = ?, available = ?, category_id = ?,
-        updated_at = datetime('now')
-       WHERE id = ?`
-    ).run(
-      parsed.data.name,
-      slug,
-      parsed.data.description,
-      parsed.data.price,
-      parsed.data.image,
-      parsed.data.stock,
-      parsed.data.featured ? 1 : 0,
-      parsed.data.available === false ? 0 : 1,
-      parsed.data.categoryId,
-      id
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const product = saveProduct(
+      {
+        ...existing,
+        name: parsed.data.name,
+        slug,
+        description: parsed.data.description,
+        price: parsed.data.price,
+        image: parsed.data.image,
+        stock: parsed.data.stock,
+        featured: parsed.data.featured ? 1 : 0,
+        available: parsed.data.available === false ? 0 : 1,
+        category_id: parsed.data.categoryId,
+        updated_at: now,
+      },
+      false
     );
 
-    return NextResponse.json({ product: getProductById(id) });
+    return NextResponse.json({ product });
   } catch {
     return NextResponse.json({ error: "Could not update product" }, { status: 500 });
   }
@@ -72,6 +75,6 @@ export async function DELETE(_request: Request, { params }: Params) {
     return NextResponse.json({ error: "Product not found" }, { status: 404 });
   }
 
-  db.prepare("DELETE FROM products WHERE id = ?").run(id);
+  deleteProduct(id);
   return NextResponse.json({ ok: true });
 }

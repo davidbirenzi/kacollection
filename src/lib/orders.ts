@@ -1,12 +1,11 @@
-import {
-  createId,
-  db,
-  type OrderItemRow,
-  type OrderRow,
-  type OrderStatus,
-  type PaymentMethod,
-} from "./db";
+import { createId, readStore, updateStore } from "./store";
 import { DELIVERY_FEE } from "./format";
+import type {
+  OrderItemRow,
+  OrderRow,
+  OrderStatus,
+  PaymentMethod,
+} from "./types";
 
 export function generateOrderNumber() {
   const stamp = Date.now().toString().slice(-8);
@@ -27,31 +26,20 @@ type CheckoutInput = {
 };
 
 export function createOrder(input: CheckoutInput) {
-  if (!input.items.length) {
-    throw new Error("Cart is empty");
-  }
+  if (!input.items.length) throw new Error("Cart is empty");
 
-  const productStmt = db.prepare(
-    "SELECT * FROM products WHERE id = ? AND available = 1"
-  );
-
+  const store = readStore();
   const lines: {
     productId: string;
     name: string;
     price: number;
     quantity: number;
-    stock: number;
   }[] = [];
 
   for (const item of input.items) {
-    const product = productStmt.get(item.productId) as
-      | {
-          id: string;
-          name: string;
-          price: number;
-          stock: number;
-        }
-      | undefined;
+    const product = store.products.find(
+      (p) => p.id === item.productId && p.available === 1
+    );
     if (!product) throw new Error("One or more products are unavailable");
     if (item.quantity < 1) throw new Error("Invalid quantity");
     if (product.stock < item.quantity) {
@@ -62,14 +50,13 @@ export function createOrder(input: CheckoutInput) {
       name: product.name,
       price: product.price,
       quantity: item.quantity,
-      stock: product.stock,
     });
   }
 
   const subtotal = lines.reduce((sum, l) => sum + l.price * l.quantity, 0);
-  const deliveryFee =
-    input.paymentMethod === "CASH_ON_DELIVERY" ? DELIVERY_FEE : DELIVERY_FEE;
+  const deliveryFee = DELIVERY_FEE;
   const total = subtotal + deliveryFee;
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
   const orderId = createId();
   const orderNumber = generateOrderNumber();
   const paymentRef =
@@ -79,101 +66,84 @@ export function createOrder(input: CheckoutInput) {
   const status: OrderStatus =
     input.paymentMethod === "CASH_ON_DELIVERY" ? "PENDING" : "PAID";
 
-  const insertOrder = db.prepare(`
-    INSERT INTO orders (
-      id, order_number, user_id, status, payment_method, payment_ref,
-      subtotal, delivery_fee, total, full_name, phone, email, address, city, notes
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  const order: OrderRow = {
+    id: orderId,
+    order_number: orderNumber,
+    user_id: input.userId,
+    status,
+    payment_method: input.paymentMethod,
+    payment_ref: paymentRef,
+    subtotal,
+    delivery_fee: deliveryFee,
+    total,
+    full_name: input.fullName,
+    phone: input.phone,
+    email: input.email,
+    address: input.address,
+    city: input.city,
+    notes: input.notes || null,
+    created_at: now,
+    updated_at: now,
+  };
 
-  const insertItem = db.prepare(`
-    INSERT INTO order_items (id, order_id, product_id, name, price, quantity)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
+  const orderItems: OrderItemRow[] = lines.map((line) => ({
+    id: createId(),
+    order_id: orderId,
+    product_id: line.productId,
+    name: line.name,
+    price: line.price,
+    quantity: line.quantity,
+  }));
 
-  const updateStock = db.prepare(`
-    UPDATE products SET stock = stock - ?, updated_at = datetime('now')
-    WHERE id = ?
-  `);
-
-  const tx = db.transaction(() => {
-    insertOrder.run(
-      orderId,
-      orderNumber,
-      input.userId,
-      status,
-      input.paymentMethod,
-      paymentRef,
-      subtotal,
-      deliveryFee,
-      total,
-      input.fullName,
-      input.phone,
-      input.email,
-      input.address,
-      input.city,
-      input.notes || null
-    );
-
+  updateStore((next) => {
+    next.orders.unshift(order);
+    next.orderItems.push(...orderItems);
     for (const line of lines) {
-      insertItem.run(
-        createId(),
-        orderId,
-        line.productId,
-        line.name,
-        line.price,
-        line.quantity
+      next.products = next.products.map((p) =>
+        p.id === line.productId
+          ? { ...p, stock: p.stock - line.quantity, updated_at: now }
+          : p
       );
-      updateStock.run(line.quantity, line.productId);
     }
   });
-
-  tx();
 
   return getOrderById(orderId)!;
 }
 
 export function getOrderById(id: string) {
-  return db.prepare("SELECT * FROM orders WHERE id = ?").get(id) as
-    | OrderRow
-    | undefined;
+  return readStore().orders.find((o) => o.id === id);
 }
 
 export function getOrderByNumber(orderNumber: string) {
-  return db
-    .prepare("SELECT * FROM orders WHERE order_number = ?")
-    .get(orderNumber) as OrderRow | undefined;
+  return readStore().orders.find((o) => o.order_number === orderNumber);
 }
 
 export function getOrderItems(orderId: string) {
-  return db
-    .prepare("SELECT * FROM order_items WHERE order_id = ?")
-    .all(orderId) as OrderItemRow[];
+  return readStore().orderItems.filter((i) => i.order_id === orderId);
 }
 
 export function listOrdersForUser(userId: string) {
-  return db
-    .prepare(
-      "SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC"
-    )
-    .all(userId) as OrderRow[];
+  return readStore()
+    .orders.filter((o) => o.user_id === userId)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
 export function listAllOrders() {
-  if (process.env.NEXT_PHASE === "phase-production-build") return [];
-  return db
-    .prepare(
-      `SELECT o.*, u.name AS customer_name
-       FROM orders o
-       JOIN users u ON u.id = o.user_id
-       ORDER BY o.created_at DESC`
-    )
-    .all() as OrderRow[];
+  const store = readStore();
+  return store.orders
+    .map((order) => {
+      const customer = store.users.find((u) => u.id === order.user_id);
+      return { ...order, customer_name: customer?.name };
+    })
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
 export function updateOrderStatus(orderId: string, status: OrderStatus) {
-  db.prepare(
-    `UPDATE orders SET status = ?, updated_at = datetime('now') WHERE id = ?`
-  ).run(status, orderId);
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  updateStore((store) => {
+    store.orders = store.orders.map((order) =>
+      order.id === orderId ? { ...order, status, updated_at: now } : order
+    );
+  });
   return getOrderById(orderId);
 }

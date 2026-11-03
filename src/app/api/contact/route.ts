@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSession } from "@/lib/auth";
-import { createId, db } from "@/lib/db";
+import { createId, updateStore } from "@/lib/store";
 
 const schema = z.object({
   name: z.string().trim().min(2),
@@ -22,17 +22,19 @@ export async function POST(request: Request) {
     }
 
     const user = await getSession();
-    db.prepare(
-      `INSERT INTO contact_messages (id, name, email, subject, message, user_id)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(
-      createId(),
-      parsed.data.name,
-      parsed.data.email.toLowerCase(),
-      parsed.data.subject,
-      parsed.data.message,
-      user?.id || null
-    );
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+
+    updateStore((store) => {
+      store.messages.push({
+        id: createId(),
+        name: parsed.data.name,
+        email: parsed.data.email.toLowerCase(),
+        subject: parsed.data.subject,
+        message: parsed.data.message,
+        user_id: user?.id || null,
+        created_at: now,
+      });
+    });
 
     return NextResponse.json({
       ok: true,

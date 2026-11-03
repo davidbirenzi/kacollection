@@ -1,7 +1,8 @@
 import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
-import { db, type Role, type UserRow } from "./db";
+import { readStore } from "./store";
+import type { Role, UserRow } from "./types";
 
 const COOKIE_NAME = "kacollection_session";
 const secret = new TextEncoder().encode(
@@ -94,13 +95,11 @@ export function toPublicUser(row: UserRow): SessionUser {
 }
 
 export function findUserByEmail(email: string) {
-  return db
-    .prepare("SELECT * FROM users WHERE email = ?")
-    .get(email.toLowerCase()) as UserRow | undefined;
+  return readStore().users.find(
+    (u) => u.email === email.toLowerCase()
+  );
 }
 
 export function findUserById(id: string) {
-  return db.prepare("SELECT * FROM users WHERE id = ?").get(id) as
-    | UserRow
-    | undefined;
+  return readStore().users.find((u) => u.id === id);
 }
